@@ -22,7 +22,7 @@ CLASS_TO_IDX = {
 # ========== 2. 扫描十类数据文件 ==========
 
 def collect_samples(split):
-    """收集文件路径和类别标签，不读取图像数据。"""
+    """返回文件路径和对应类别标签，不读取图像数据。"""
 
     if split not in ("train", "test"):
         raise ValueError("split 必须是 train 或 test")
@@ -114,7 +114,57 @@ def center_crop(image, size):
     ]
 
 
-# ========== 5. 主程序：验证数据集和样本 ==========
+
+# ========== 5. 训练数据 Patch 提取 ==========
+
+def extract_patches(image):
+    """从128×128双通道图像提取49个94×94 Patch。"""
+
+    # 与上游基线一致：先中心裁剪到100×100
+    chip = center_crop(image, 100)
+
+    patch_size = 94
+    stride = 1
+    patches = []
+
+    # 100 - 94 + 1 = 7 个起始位置
+    for y in range(0, 100 - patch_size + 1, stride):
+        for x in range(0, 100 - patch_size + 1, stride):
+            patch = chip[
+                :,
+                y:y + patch_size,
+                x:x + patch_size
+            ]
+            patches.append(patch)
+
+    return patches
+
+
+# ========== 6. 训练时随机裁剪 ==========
+
+def random_crop(patch, size=88):
+    """按照上游 RandomCrop 的规则随机裁剪。"""
+
+    _, height, width = patch.shape
+
+    dh = height - size
+    dw = width - size
+
+    if dh < 0 or dw < 0:
+        raise ValueError("Patch尺寸小于裁剪尺寸")
+
+    # 保持上游的随机裁剪边界规则
+    y = np.random.randint(0, dh) if dh > 0 else 0
+    x = np.random.randint(0, dw) if dw > 0 else 0
+
+    return patch[
+        :,
+        y:y + size,
+        x:x + size
+    ]
+
+
+# ========== 主程序：验证数据集和样本 ==========
 
 if __name__ == "__main__":
 
@@ -137,3 +187,25 @@ if __name__ == "__main__":
     print("88裁剪形状：", image_88.shape)
     print("幅度范围：", image[0].min(), image[0].max())
     print("相位范围：", image[1].min(), image[1].max())
+
+    # 检查训练Patch提取结果
+    patches = extract_patches(image_128)
+
+    print("Patch数量：", len(patches))
+    print("第一个Patch形状：", patches[0].shape)
+    print("最后一个Patch形状：", patches[-1].shape)
+
+    assert len(patches) == 49
+    assert all(p.shape == (2, 94, 94) for p in patches)
+
+    print("训练Patch提取检查通过！")
+
+
+    # 检查随机裁剪
+    random_image = random_crop(patches[0], 88)
+
+    print("随机裁剪后形状：", random_image.shape)
+
+    assert random_image.shape == (2, 88, 88)
+
+    print("随机裁剪检查通过！")
