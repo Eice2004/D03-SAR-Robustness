@@ -24,7 +24,7 @@ BATCH_SIZE = 100
 
 # 目前只训练1轮，用于检查完整训练流程
 # 正式基线训练时改为100
-EPOCHS = 1
+EPOCHS = 100
 
 # 优化器参数
 LEARNING_RATE = 0.001
