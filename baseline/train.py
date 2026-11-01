@@ -1,4 +1,3 @@
-
 import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader
@@ -22,8 +21,7 @@ RANDOM_SEED = 12321
 # 每批读取的图像数量
 BATCH_SIZE = 100
 
-# 目前只训练1轮，用于检查完整训练流程
-# 正式基线训练时改为100
+# 尾批次损失缩放修复后的正式训练，共100轮
 EPOCHS = 100
 
 # 优化器参数
@@ -37,7 +35,8 @@ LR_MILESTONES = [50]
 LR_DECAY = 0.1
 
 # 实验名称
-MODEL_NAME = "AConvNet-SOC"
+# 使用新的名称，避免覆盖之前发生故障的实验结果
+MODEL_NAME = "AConvNet-SOC-tailfix"
 
 
 # ========== 2. 设置随机种子 ==========
@@ -85,7 +84,7 @@ print("随机种子：", RANDOM_SEED)
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
 # 模型权重保存目录
-# 不同随机种子使用不同目录，避免实验结果相互覆盖
+# 不同实验使用不同目录，避免实验结果相互覆盖
 CHECKPOINT_DIR = (
     PROJECT_ROOT
     / "checkpoints"
@@ -113,11 +112,13 @@ train_dataset = MSTAR_Dataset("train")
 
 # 创建训练集DataLoader
 # 每批读取100张图像，每轮打乱样本顺序
+# drop_last=False：保留最后一个不完整批次中的3张图像
 train_loader = DataLoader(
     train_dataset,
     batch_size=BATCH_SIZE,
     shuffle=True,
-    num_workers=0
+    num_workers=0,
+    drop_last=False
 )
 
 # 创建MSTAR测试集
@@ -135,6 +136,11 @@ test_loader = DataLoader(
 print("训练集样本数量：", len(train_dataset))
 print("测试集样本数量：", len(test_dataset))
 print("每轮训练批次数量：", len(train_loader))
+
+# 检查最后一个批次的样本数量
+last_batch_size = len(train_dataset) % BATCH_SIZE
+
+print("最后一个批次样本数量：", last_batch_size)
 
 
 # ========== 6. 创建A-ConvNet模型 ==========
@@ -226,6 +232,9 @@ history = {
     "lr_milestones": LR_MILESTONES,
     "lr_decay": LR_DECAY,
 
+    # 记录尾批次损失缩放策略
+    "tail_batch_scaling": True,
+
     # 每轮训练结果
     "loss": [],
     "accuracy": [],
@@ -251,8 +260,12 @@ for epoch in range(1, EPOCHS + 1):
     # 记录本轮训练开始时的学习率
     current_lr = optimizer.param_groups[0]["lr"]
 
-    # 用列表记录每个批次的损失
-    batch_losses = []
+    # 记录本轮所有样本的损失总和
+    # 使用实际样本数量进行加权统计
+    epoch_loss_sum = 0.0
+
+    # 记录本轮已经处理的样本数量
+    epoch_sample_count = 0
 
     print(f"\n========== 第 {epoch}/{EPOCHS} 轮训练 ==========")
     print(f"当前学习率：{current_lr:.6f}")
@@ -266,6 +279,10 @@ for epoch in range(1, EPOCHS + 1):
         images = images.to(device)
         labels = labels.to(device)
 
+        # 获取当前批次实际包含的样本数量
+        # 正常批次为100，最后一个批次为3
+        actual_batch_size = labels.size(0)
+
         # ---------- 1. 前向传播 ----------
 
         # 将图像输入A-ConvNet，得到预测分数
@@ -273,8 +290,17 @@ for epoch in range(1, EPOCHS + 1):
 
         # ---------- 2. 计算损失 ----------
 
-        # 比较预测结果与真实标签
-        loss = criterion(outputs, labels)
+        # 先计算当前批次原始的平均交叉熵损失
+        raw_loss = criterion(outputs, labels)
+
+        # 根据实际批次大小计算损失缩放系数
+        # 正常批次：100/100 = 1
+        # 最后一个批次：3/100 = 0.03
+        loss_scale = actual_batch_size / BATCH_SIZE
+
+        # 对最后一个不完整批次的损失进行缩放
+        # 正常批次的损失保持不变
+        loss = raw_loss * loss_scale
 
         # ---------- 3. 清除旧梯度 ----------
 
@@ -282,7 +308,7 @@ for epoch in range(1, EPOCHS + 1):
 
         # ---------- 4. 反向传播 ----------
 
-        # 根据损失计算模型参数的梯度
+        # 根据缩放后的损失计算模型参数的梯度
         loss.backward()
 
         # ---------- 5. 更新模型权重 ----------
@@ -290,8 +316,14 @@ for epoch in range(1, EPOCHS + 1):
         # 优化器根据梯度调整模型参数
         optimizer.step()
 
-        # 记录当前批次的损失
-        batch_losses.append(loss.item())
+        # ---------- 6. 记录训练损失 ----------
+
+        # 注意：这里使用原始损失，而不是缩放后的损失
+        # 乘以实际样本数量，保证整轮损失统计正确
+        epoch_loss_sum += raw_loss.item() * actual_batch_size
+
+        # 累计本轮已经处理的样本数量
+        epoch_sample_count += actual_batch_size
 
         # 每完成100个批次输出一次训练进度
         if batch_index % 100 == 0 or batch_index == len(train_loader):
@@ -299,17 +331,21 @@ for epoch in range(1, EPOCHS + 1):
             print(
                 f"第 {epoch} 轮，"
                 f"批次：{batch_index}/{len(train_loader)}，"
-                f"当前损失：{loss.item():.4f}"
+                f"当前损失：{raw_loss.item():.4f}，"
+                f"实际批次大小：{actual_batch_size}，"
+                f"损失缩放系数：{loss_scale:.2f}"
             )
 
-    # ---------- 6. 计算本轮平均损失 ----------
+    # ---------- 7. 计算本轮平均损失 ----------
 
-    average_loss = sum(batch_losses) / len(batch_losses)
+    # 按照实际样本数量计算加权平均损失
+    # 不让最后3张图像影响整轮损失的统计方式
+    average_loss = epoch_loss_sum / epoch_sample_count
 
     print(f"\n第 {epoch} 轮训练完成！")
     print(f"平均损失：{average_loss:.4f}")
 
-    # ---------- 7. 在测试集上评估模型 ----------
+    # ---------- 8. 在测试集上评估模型 ----------
 
     # 使用完整测试集计算分类准确率
     test_accuracy = evaluate(
@@ -320,7 +356,7 @@ for epoch in range(1, EPOCHS + 1):
 
     print(f"测试集准确率：{test_accuracy:.2f}%")
 
-    # ---------- 8. 保存本轮模型权重 ----------
+    # ---------- 9. 保存本轮模型权重 ----------
 
     # 每轮训练完成后保存一次模型
     # 例如：model-001.pth、model-002.pth
@@ -339,7 +375,7 @@ for epoch in range(1, EPOCHS + 1):
 
     print("模型已保存：", checkpoint_path)
 
-    # ---------- 9. 保存本轮训练记录 ----------
+    # ---------- 10. 保存本轮训练记录 ----------
 
     # 将本轮结果添加到历史记录
     history["loss"].append(average_loss)
@@ -363,7 +399,7 @@ for epoch in range(1, EPOCHS + 1):
 
     print("训练记录已保存：", HISTORY_PATH)
 
-    # ---------- 10. 调整下一轮学习率 ----------
+    # ---------- 11. 调整下一轮学习率 ----------
 
     # 根据MultiStepLR设置调整学习率
     # 第50轮结束后，下一轮使用0.0001
