@@ -16,7 +16,7 @@ from model import AConvNet
 # ========== 1. 训练参数配置 ==========
 
 # 随机种子：与原作者SOC实验保持一致
-RANDOM_SEED = 12321
+RANDOM_SEED = 12456
 
 # 每批读取的图像数量
 BATCH_SIZE = 100
@@ -36,7 +36,7 @@ LR_DECAY = 0.1
 
 # 实验名称
 # 使用新的名称，避免覆盖之前发生故障的实验结果
-MODEL_NAME = "AConvNet-SOC-tailfix"
+MODEL_NAME = "baseline1"
 
 
 # ========== 2. 设置随机种子 ==========
