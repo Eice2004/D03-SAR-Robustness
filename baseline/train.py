@@ -38,6 +38,16 @@ LR_DECAY = 0.1
 # 使用新的名称，避免覆盖之前发生故障的实验结果
 MODEL_NAME = "baseline1"
 
+# 可选的训练数据增强函数
+# 暂时没有增强函数，或需要运行原基线时，保持 None 即可
+# 增强函数写好并正确导入后，将 None 替换为函数名，例如：
+# TRAIN_TRANSFORM = apply_occlusion
+# 注意：这里只填写函数名，不加括号；Dataset 会为每张训练图像调用它
+# 如需固定增强参数，可使用 functools.partial 绑定参数后再赋值
+# 函数接收并返回 NumPy float32 数组，形状均为 (2, 88, 88)，数值须全部有限
+# 增强在训练随机裁剪之后、转换为 Tensor 之前执行；测试集不使用增强
+TRAIN_TRANSFORM = None
+
 
 # ========== 2. 设置随机种子 ==========
 
@@ -108,7 +118,7 @@ HISTORY_PATH = (
 # ========== 5. 加载训练数据和测试数据 ==========
 
 # 创建MSTAR训练集
-train_dataset = MSTAR_Dataset("train")
+train_dataset = MSTAR_Dataset("train", transform=TRAIN_TRANSFORM)
 
 # 创建训练集DataLoader
 # 每批读取100张图像，每轮打乱样本顺序

@@ -1,5 +1,6 @@
 import time  # Python标准库，用于测量数据加载耗时
 import torch
+import numpy as np
 from torch.utils.data import Dataset, DataLoader
 
 # 复用已经完成的 MSTAR 数据读取与裁剪函数
@@ -15,7 +16,7 @@ from read_mstar import (
 
 class MSTAR_Dataset(Dataset):
 
-    def __init__(self, split="train"):
+    def __init__(self, split="train", transform=None):
         """初始化数据集，收集原始文件路径和类别标签。"""
 
         # 只允许使用训练集或测试集
@@ -24,6 +25,11 @@ class MSTAR_Dataset(Dataset):
 
         # 保存数据集类型，供其他方法判断训练或测试模式
         self.split = split
+
+        # 可选增强仅用于训练集，输入输出均为 (2, 88, 88) 的 float32 NumPy 数组
+        if transform is not None and not callable(transform):
+            raise TypeError("transform 必须为可调用对象或 None")
+        self.transform = transform
 
         # 收集原始文件路径和标签
         # 每个元素为 (file_path, label)
@@ -88,6 +94,24 @@ class MSTAR_Dataset(Dataset):
 
             # 训练时随机裁剪成88×88
             image = random_crop(patch, 88)
+
+            # 随机裁剪后、转换为Tensor前执行增强，并检查输出契约
+            if self.transform is not None:
+                image = self.transform(image)
+                if not isinstance(image, np.ndarray):
+                    raise TypeError(
+                        f"transform 输出必须为 NumPy ndarray，实际为 {type(image).__name__}"
+                    )
+                if image.shape != (2, 88, 88):
+                    raise ValueError(
+                        f"transform 输出形状必须为 (2, 88, 88)，实际为 {image.shape}"
+                    )
+                if image.dtype != np.float32:
+                    raise TypeError(
+                        f"transform 输出 dtype 必须为 float32，实际为 {image.dtype}"
+                    )
+                if not np.isfinite(image).all():
+                    raise ValueError("transform 输出数值必须全部有限，不能包含 NaN 或 Inf")
 
         else:
 
