@@ -16,7 +16,7 @@ from model import AConvNet
 # ========== 1. 训练参数配置 ==========
 
 # 随机种子：与原作者SOC实验保持一致
-RANDOM_SEED = 12456
+RANDOM_SEED = 12457
 
 # 每批读取的图像数量
 BATCH_SIZE = 100
@@ -36,7 +36,7 @@ LR_DECAY = 0.1
 
 # 实验名称
 # 使用新的名称，避免覆盖之前发生故障的实验结果
-MODEL_NAME = "baseline1"
+MODEL_NAME = "baseline2"
 
 # 可选的训练数据增强函数
 # 暂时没有增强函数，或需要运行原基线时，保持 None 即可
